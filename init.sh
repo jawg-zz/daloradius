@@ -82,8 +82,8 @@ function init_database {
 
     # Create database and run schema scripts
     mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};"
-    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/fr3-mysql-freeradius.sql" || error_exit "Error: Failed to import Freeradius SQL schema."
-    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/mysql-daloradius.sql" || error_exit "Error: Failed to import daloRADIUS SQL schema."
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/fr3-mariadb-freeradius.sql" || error_exit "Error: Failed to import Freeradius SQL schema."
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/mariadb-daloradius.sql" || error_exit "Error: Failed to import daloRADIUS SQL schema."
     mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${RADIUS_PATH}/mods-config/sql/main/mysql/schema.sql" || error_exit "Error: Failed to import Freeradius main SQL schema."
     mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${RADIUS_PATH}/mods-config/sql/ippool/mysql/schema.sql" || error_exit "Error: Failed to import IP pool SQL schema."
 
