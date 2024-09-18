@@ -1,76 +1,98 @@
-#!/bin/bash
-# Executable process script for daloRADIUS docker image:
-# GitHub: git@github.com:lirantal/daloradius.git
-DALORADIUS_PATH=/var/www/daloradius
-DALORADIUS_CONF_PATH=/var/www/daloradius/app/common/includes/daloradius.conf.php
+#!/usr/bin/env bash
+# Executable process script for Freeradius + DaloRadius + External MariaDB
 
+set -e  # Exit script if any command fails
+set -o pipefail  # Catch errors in pipes
 
-function init_daloradius {
+echo "Starting initialization..."
 
-    if ! test -f "$DALORADIUS_CONF_PATH" || ! test -s "$DALORADIUS_CONF_PATH"; then
-        cp "$DALORADIUS_CONF_PATH.sample" "$DALORADIUS_CONF_PATH"
+# Function to log errors and exit
+function error_exit {
+    echo "$1" >&2
+    exit 1
+}
+
+# Check if all required environment variables are set
+if [ -z "${MYSQL_HOST}" ] || [ -z "${MYSQL_USER}" ] || [ -z "${MYSQL_PASSWORD}" ] || [ -z "${MYSQL_DATABASE}" ]; then
+  error_exit "Error: Missing one or more required environment variables. Make sure MYSQL_HOST, MYSQL_USER, MYSQL_PASSWORD, and MYSQL_DATABASE are set."
+fi
+
+# Database availability check with timeout (max 5 minutes)
+DB_WAIT_TIMEOUT=300  # 5 minutes
+DB_WAIT_INTERVAL=10  # Check every 10 seconds
+SECONDS=0
+
+echo -n "Waiting for external MariaDB (${MYSQL_HOST})..."
+
+while ! mysqladmin ping -h"${MYSQL_HOST}" -u"${MYSQL_USER}" -p"${MYSQL_PASSWORD}" --silent; do
+    if [ ${SECONDS} -ge ${DB_WAIT_TIMEOUT} ]; then
+        error_exit "Error: Timeout while waiting for MariaDB to become available."
     fi
-    [ -n "$MYSQL_HOST" ] && sed -i "s/\$configValues\['CONFIG_DB_HOST'\] = .*;/\$configValues\['CONFIG_DB_HOST'\] = '$MYSQL_HOST';/" $DALORADIUS_CONF_PATH || MYSQL_HOST=localhost
-    [ -n "$MYSQL_PORT" ] && sed -i "s/\$configValues\['CONFIG_DB_PORT'\] = .*;/\$configValues\['CONFIG_DB_PORT'\] = '$MYSQL_PORT';/" $DALORADIUS_CONF_PATH
-    [ -n "$MYSQL_PASSWORD" ] && sed -i "s/\$configValues\['CONFIG_DB_PASS'\] = .*;/\$configValues\['CONFIG_DB_PASS'\] = '$MYSQL_PASSWORD';/" $DALORADIUS_CONF_PATH || MYSQL_PASSWORD=radpass
-    [ -n "$MYSQL_USER" ] && sed -i "s/\$configValues\['CONFIG_DB_USER'\] = .*;/\$configValues\['CONFIG_DB_USER'\] = '$MYSQL_USER';/" $DALORADIUS_CONF_PATH || MYSQL_USER=raduser
-    [ -n "$MYSQL_DATABASE" ] && sed -i "s/\$configValues\['CONFIG_DB_NAME'\] = .*;/\$configValues\['CONFIG_DB_NAME'\] = '$MYSQL_DATABASE';/" $DALORADIUS_CONF_PATH || MYSQL_DATABASE=raddb
-    sed -i "s/\$configValues\['FREERADIUS_VERSION'\] = .*;/\$configValues\['FREERADIUS_VERSION'\] = '3';/" $DALORADIUS_CONF_PATH
-    [ -n "$PASSWORD_MIN_LENGTH" ] && sed -i "s/\$configValues\['CONFIG_DB_PASSWORD_MIN_LENGTH'\] = .*;/\$configValues\['CONFIG_DB_PASSWORD_MIN_LENGTH'\] = '$PASSWORD_MIN_LENGTH';/" $DALORADIUS_CONF_PATH
-    [ -n "$PASSWORD_MAX_LENGTH" ] && sed -i "s/\$configValues\['CONFIG_DB_PASSWORD_MAX_LENGTH'\] = .*;/\$configValues\['CONFIG_DB_PASSWORD_MAX_LENGTH'\] = '$PASSWORD_MAX_LENGTH';/" $DALORADIUS_CONF_PATH
+    echo -n "."
+    sleep ${DB_WAIT_INTERVAL}
+done
 
-    [ -n "$DEFAULT_FREERADIUS_SERVER" ] \
-        && sed -i "s/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSERVER'\] = .*;/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSERVER'\] = '$DEFAULT_FREERADIUS_SERVER';/" $DALORADIUS_CONF_PATH \
-        || sed -i "s/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSERVER'\] = .*;/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSERVER'\] = 'radius';/" $DALORADIUS_CONF_PATH
-    [ -n "$DEFAULT_FREERADIUS_PORT" ] && sed -i "s/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSPORT'\] = .*;/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSPORT'\] = '$DEFAULT_FREERADIUS_PORT';/" $DALORADIUS_CONF_PATH
-    [ -n "$DEFAULT_CLIENT_SECRET" ] && sed -i "s/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSECRET'\] = .*;/\$configValues\['CONFIG_MAINT_TEST_USER_RADIUSSECRET'\] = '$DEFAULT_CLIENT_SECRET';/" $DALORADIUS_CONF_PATH
+echo "Database is available."
 
-    [ -n "$MAIL_SMTPADDR" ] && sed -i "s/\$configValues\['CONFIG_MAIL_SMTPADDR'\] = .*;/\$configValues\['CONFIG_MAIL_SMTPADDR'\] = '$MAIL_SMTPADDR';/" $DALORADIUS_CONF_PATH
-    [ -n "$MAIL_PORT" ] && sed -i "s/\$configValues\['CONFIG_MAIL_SMTPPORT'\] = .*;/\$configValues\['CONFIG_MAIL_SMTPPORT'\] = '$MAIL_PORT';/" $DALORADIUS_CONF_PATH
-    [ -n "$MAIL_FROM" ] && sed -i "s/\$configValues\['CONFIG_MAIL_SMTPFROM'\] = .*;/\$configValues\['CONFIG_MAIL_SMTPFROM'\] = '$MAIL_FROM';/" $DALORADIUS_CONF_PATH
-    [ -n "$MAIL_AUTH" ] && sed -i "s/\$configValues\['CONFIG_MAIL_SMTPAUTH'\] = .*;/\$configValues\['CONFIG_MAIL_SMTPAUTH'\] = '$MAIL_AUTH';/" $DALORADIUS_CONF_PATH
-    sed -i "s/\$configValues\['CONFIG_LOG_FILE'\] = .*;/\$configValues\['CONFIG_LOG_FILE'\] = '\/tmp\/daloradius.log';/" $DALORADIUS_CONF_PATH
+# Function to initialize daloRADIUS configuration
+function init_daloradius {
+    echo "Starting daloRADIUS initialization..."
+
+    if [ ! -f "${DALORADIUS_CONF_PATH}" ] || [ ! -s "${DALORADIUS_CONF_PATH}" ]; then
+        if [ -f "${DALORADIUS_CONF_PATH}.sample" ]; then
+            cp "${DALORADIUS_CONF_PATH}.sample" "${DALORADIUS_CONF_PATH}"
+        else
+            error_exit "Error: daloRADIUS sample config file not found."
+        fi
+    fi
+
+    # Configure daloRADIUS for external MariaDB
+    sed -i "s/\$configValues\['CONFIG_DB_HOST'\] = .*;/\$configValues\['CONFIG_DB_HOST'\] = '${MYSQL_HOST}';/" "${DALORADIUS_CONF_PATH}"
+    sed -i "s/\$configValues\['CONFIG_DB_PORT'\] = .*;/\$configValues\['CONFIG_DB_PORT'\] = '${MYSQL_PORT}';/" "${DALORADIUS_CONF_PATH}"
+    sed -i "s/\$configValues\['CONFIG_DB_PASS'\] = .*;/\$configValues\['CONFIG_DB_PASS'\] = '${MYSQL_PASSWORD}';/" "${DALORADIUS_CONF_PATH}"
+    sed -i "s/\$configValues\['CONFIG_DB_USER'\] = .*;/\$configValues\['CONFIG_DB_USER'\] = '${MYSQL_USER}';/" "${DALORADIUS_CONF_PATH}"
+    sed -i "s/\$configValues\['CONFIG_DB_NAME'\] = .*;/\$configValues\['CONFIG_DB_NAME'\] = '${MYSQL_DATABASE}';/" "${DALORADIUS_CONF_PATH}"
+    sed -i "s/\$configValues\['FREERADIUS_VERSION'\] = .*;/\$configValues\['FREERADIUS_VERSION'\] = '3';/" "${DALORADIUS_CONF_PATH}"
 
     echo "daloRADIUS initialization completed."
 }
 
-function init_database {
-    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE $MYSQL_DATABASE;"
-    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "CREATE USER '$MYSQL_USER'@'localhost' IDENTIFIED BY '$MYSQL_PASSWORD';"
-    mysql -u root -p"$MYSQL_ROOT_PASSWORD" -e "GRANT ALL PRIVILEGES ON $MYSQL_DATABASE.* TO '$MYSQL_USER'@'localhost'";
-    mysql -h "$MYSQL_HOST" -u "$MYSQL_USER" -p"$MYSQL_PASSWORD" "$MYSQL_DATABASE" < $DALORADIUS_PATH/contrib/db/mariadb-daloradius.sql
-    echo "Database initialization for daloRADIUS completed."
+# Function to initialize Freeradius configuration
+function init_freeradius {
+    echo "Starting Freeradius initialization..."
+
+    # Enable SQL in Freeradius
+    sed -i 's|driver = "rlm_sql_null"|driver = "rlm_sql_mysql"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|dialect = "sqlite"|dialect = "mysql"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|#\s*read_clients = yes|read_clients = yes|' "${RADIUS_PATH}/mods-available/sql"
+
+    # Set Database connection for Freeradius
+    sed -i 's|^#\s*server = .*|server = "'${MYSQL_HOST}'"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|^#\s*port = .*|port = "'${MYSQL_PORT}'"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|radius_db = .*|radius_db = "'${MYSQL_DATABASE}'"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|^#\s*login = .*|login = "'${MYSQL_USER}'"|' "${RADIUS_PATH}/mods-available/sql"
+    sed -i 's|^#\s*password = .*|password = "'${MYSQL_PASSWORD}'"|' "${RADIUS_PATH}/mods-available/sql"
+
+    echo "Freeradius initialization completed."
 }
 
-echo "Starting daloRADIUS..."
+# Function to initialize the MariaDB database
+function init_database {
+    echo "Starting MySQL initialization..."
 
-INIT_LOCK=/data/.init_done
-if test -f "$INIT_LOCK"; then
-    #
-    if ! test -f "$DALORADIUS_CONF_PATH" || ! test -s "$DALORADIUS_CONF_PATH"; then
-        echo "Init lock file exists but config file does not exist or is 0 bytes, performing initial setup of daloRADIUS."
-        init_daloradius
-    fi
-    echo "Init lock file exists and config file exists, skipping initial setup of daloRADIUS."
-else
-    init_daloradius
-    date > $INIT_LOCK
-fi
+    # Create database and run schema scripts
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" -e "CREATE DATABASE IF NOT EXISTS ${MYSQL_DATABASE};"
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/fr3-mysql-freeradius.sql" || error_exit "Error: Failed to import Freeradius SQL schema."
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${DALORADIUS_PATH}/contrib/db/mysql-daloradius.sql" || error_exit "Error: Failed to import daloRADIUS SQL schema."
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${RADIUS_PATH}/mods-config/sql/main/mysql/schema.sql" || error_exit "Error: Failed to import Freeradius main SQL schema."
+    mysql -h "${MYSQL_HOST}" -u "${MYSQL_USER}" -p"${MYSQL_PASSWORD}" "${MYSQL_DATABASE}" < "${RADIUS_PATH}/mods-config/sql/ippool/mysql/schema.sql" || error_exit "Error: Failed to import IP pool SQL schema."
 
-# wait for MySQL-Server to be ready
-echo -n "Waiting for mysql ($MYSQL_HOST)..."
-while ! mysqladmin ping -h"$MYSQL_HOST" -p"$MYSQL_PASSWORD" --silent; do
-    sleep 20
-done
-echo "ok"
+    echo "Database initialization for Freeradius & daloRADIUS completed."
+}
 
-DB_LOCK=/data/.db_init_done
-if test -f "$DB_LOCK"; then
-    echo "Database lock file exists, skipping initial setup of mysql database."
-else
-    init_database
-    date > $DB_LOCK
-fi
+# Call the functions in order
+init_database
+init_freeradius
+init_daloradius
 
-# Start Apache2 in the foreground
-/usr/sbin/apachectl -DFOREGROUND -k start
+echo "Initialization process completed successfully."

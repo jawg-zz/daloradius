@@ -1,63 +1,25 @@
-version: "3"
+version: '3.8'
 
 services:
-
-  radius-mysql:
-    image: mariadb:10
-    container_name: radius-mysql
-    restart: unless-stopped
-    environment:
-      - MYSQL_DATABASE=radius
-      - MYSQL_USER=radius
-      - MYSQL_PASSWORD=radiusdbpw
-      - MYSQL_ROOT_PASSWORD=radiusrootdbpw
-    volumes:
-      - "./data/mysql:/var/lib/mysql"
-
-  radius:
-    container_name: radius
+  freeradius:
     build:
       context: .
-      dockerfile: Dockerfile-freeradius
-    restart: unless-stopped
-    depends_on: 
-      - radius-mysql
-    ports:
-      - '1812:1812/udp'
-      - '1813:1813/udp'
+      dockerfile: Dockerfile
     environment:
-      - MYSQL_HOST=radius-mysql
-      - MYSQL_PORT=3306
-      - MYSQL_DATABASE=radius
-      - MYSQL_USER=radius
-      - MYSQL_PASSWORD=radiusdbpw
-      # Optional settings
-      - DEFAULT_CLIENT_SECRET=testing123
+      MYSQL_HOST: ${MYSQL_HOST}
+      MYSQL_PORT: ${MYSQL_PORT}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      DEFAULT_CLIENT_SECRET: ${DEFAULT_CLIENT_SECRET:-testing123}
+      WEB_PORT: ${WEB_PORT:-8888}
+      DA_API_PORT: ${DA_API_PORT:-8001}
+      RADIUS_AUTH_PORT_UDP: ${RADIUS_AUTH_PORT_UDP:-1812}
+      RADIUS_ACCT_PORT_UDP: ${RADIUS_ACCT_PORT_UDP:-1813}
+      RADIUS_AUTH_PORT_TCP: ${RADIUS_AUTH_PORT_TCP:-1812}
+      RADIUS_ACCT_PORT_TCP: ${RADIUS_ACCT_PORT_TCP:-1813}
     volumes:
-      - ./data/freeradius:/data
-    # If you want to disable debug output, remove the command parameter
-    command: -X
+      - data:/data
 
-  radius-web:
-    build: .
-    container_name: radius-web
-    restart: unless-stopped
-    depends_on:
-      - radius
-      - radius-mysql
-    environment:
-      - MYSQL_HOST=radius-mysql
-      - MYSQL_PORT=3306
-      - MYSQL_DATABASE=radius
-      - MYSQL_USER=radius
-      - MYSQL_PASSWORD=radiusdbpw
-      # Optional Settings:
-      - DEFAULT_CLIENT_SECRET=testing123
-      - DEFAULT_FREERADIUS_SERVER=radius
-      - MAIL_SMTPADDR=127.0.0.1
-      - MAIL_PORT=25
-      - MAIL_FROM=root@daloradius.xdsl.by
-      - MAIL_AUTH=
-
-    volumes:
-      - ./data/daloradius:/data
+volumes:
+  data:
